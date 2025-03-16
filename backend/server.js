@@ -10,7 +10,7 @@ app.use(express.json());
 
 
 const openai = new OpenAI({
-  base_url: process.env.OPENAI_BASE_URL || "https://api.electronhub.top/v1/",
+  base_url: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
   api_key: process.env.OPENAI_API_KEY,
 });
 
