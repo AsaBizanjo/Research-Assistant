@@ -10,10 +10,38 @@ app.use(express.json());
 
 
 const openai = new OpenAI({
-  base_url: process.env.OPENAI_BASE_URL || "https://api.electronhub.top/v1/",
+  base_url: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1/",
   api_key: process.env.OPENAI_API_KEY,
 });
 
+const coreApiCache = new Map();
+
+async function searchCoreWithCache(query, limit = 1) {
+  const cacheKey = `${query}_${limit}`;
+  
+  if (coreApiCache.has(cacheKey)) {
+    return coreApiCache.get(cacheKey);
+  }
+  
+  try {
+    const response = await axios.get('https://api.core.ac.uk/v3/search/works', {
+      params: { q: query, limit },
+      headers: { 'Authorization': `Bearer ${process.env.CORE_API_KEY}` }
+    });
+    
+    coreApiCache.set(cacheKey, response.data.results);
+    
+    if (coreApiCache.size > 100) {
+      const oldestKey = coreApiCache.keys().next().value;
+      coreApiCache.delete(oldestKey);
+    }
+    
+    return response.data.results;
+  } catch (error) {
+    console.error('CORE API search error:', error);
+    return [];
+  }
+}
 
 app.post('/api/generate-initial-content', async (req, res) => {
   try {
@@ -334,7 +362,7 @@ app.post('/api/validate-papers', async (req, res) => {
       messages: [
         { 
           role: "system", 
-          content: "You are an academic research assistant. Review the list of papers found for a research topic and rate their relevance on a scale of 1-10. For each paper, provide a brief explanation of why it's relevant or not relevant to the research topic. Return a JSON array with each paper having these additional fields: relevanceScore (number 1-10) and relevanceExplanation (string)." 
+          content: "You are an academic research assistant. Review the list of papers found for a research topic and rate their relevance on a scale of 1-10. For each paper, provide a brief explanation of why it's relevant or not relevant to the research topic. Return a JSON array with each paper having these additional fields: relevanceScore (number 1-10) and relevanceExplanation (string). Ensure your response is valid JSON." 
         },
         { 
           role: "user", 
@@ -351,7 +379,11 @@ app.post('/api/validate-papers', async (req, res) => {
       enhancedPapers = result.papers || papers;
     } catch (parseError) {
       console.error('Error parsing AI response:', parseError);
-      enhancedPapers = papers;
+      enhancedPapers = papers.map(paper => ({
+        ...paper,
+        relevanceScore: 5,
+        relevanceExplanation: "Relevance could not be automatically determined."
+      }));
     }
     
     res.json({ papers: enhancedPapers });
@@ -366,6 +398,27 @@ app.post('/api/generate-report', async (req, res) => {
   try {
     const { prompt, userFeedback, strategies, selectedPapers } = req.body;
     
+    const papersWithFullText = await Promise.all(selectedPapers.map(async (paper) => {
+      try {
+        const response = await axios.post(`${req.protocol}://${req.get('host')}/api/fetch-full-text`, {
+          doi: paper.doi,
+          url: paper.url,
+          title: paper.title,
+          authors: paper.authors?.map(a => a.name).join(', '),
+          year: paper.year
+        });
+        
+        return {
+          ...paper,
+          fullText: response.data.fullText,
+          textSource: response.data.source
+        };
+      } catch (error) {
+        console.error(`Error fetching full text for paper "${paper.title}":`, error);
+        return paper;
+      }
+    }));
+    
     let context = `Research topic: ${prompt}\n\n`;
     context += "User preferences and feedback:\n";
     
@@ -379,22 +432,46 @@ app.post('/api/generate-report', async (req, res) => {
     });
     
     context += "Selected Papers for Citation:\n";
-    selectedPapers.forEach((paper, index) => {
+    papersWithFullText.forEach((paper, index) => {
       context += `Paper ${index+1}:\n`;
       context += `Title: ${paper.title}\n`;
       context += `Authors: ${paper.authors?.map(a => a.name).join(', ') || 'Unknown'}\n`;
       context += `Year: ${paper.year || 'Unknown'}\n`;
       context += `DOI: ${paper.doi || 'N/A'}\n`;
-      context += `Abstract: ${paper.abstract || 'N/A'}\n\n`;
+      
+      if (paper.fullText) {
+        context += `Full Text Available: Yes (Source: ${paper.textSource})\n`;
+        
+        const sections = extractSectionsFromFullText(paper.fullText);
+        
+        if (Object.keys(sections).length > 0) {
+          Object.entries(sections).forEach(([sectionName, content]) => {
+            context += `${sectionName.charAt(0).toUpperCase() + sectionName.slice(1)}: ${content}\n\n`;
+          });
+        } else {
+          const fullTextSummary = summarizeFullText(paper.fullText, 2000);
+          context += `Full Text Summary: ${fullTextSummary}\n\n`;
+        }
+      } else {
+        context += `Full Text Available: No\n`;
+        context += `Abstract: ${paper.abstract || 'N/A'}\n\n`;
+      }
     });
     
-    // gemini-2.0-flash-thinking-exp-01-21 will give a better report
+    const systemPrompt = `You are an academic research assistant with expertise in creating comprehensive research reports. 
+    
+    Some papers have full text available from CORE API, while others only have abstracts. When citing:
+    - For papers with full text, you can make detailed references to their methodology, findings, and conclusions
+    - For papers with only abstracts, clearly indicate the limited information available
+    
+    Generate a detailed academic report in Markdown format with proper APA citations...`;
+    
     const completion = await openai.chat.completions.create({
-      model: "o3-mini", 
+      model: "gemini-2.0-flash-thinking-exp-01-21", 
       messages: [
         { 
           role: "system", 
-          content: "You are an academic research assistant with expertise in creating comprehensive research reports. Generate a detailed academic report in Markdown format with proper APA citations. The report should follow the outline and incorporate the key points specified by the user. Use the selected papers to support the arguments and provide academic backing. Include:\n1. An introduction that frames the research topic\n2. Main sections as outlined in the user's feedback\n3. A literature review that critically analyzes the selected papers\n4. A methodology section if applicable\n5. A findings/discussion section that synthesizes the research\n6. A conclusion that summarizes key insights and suggests future research directions\n7. A properly formatted APA references section" 
+          content: systemPrompt 
         },
         { 
           role: "user", 
@@ -409,6 +486,73 @@ app.post('/api/generate-report', async (req, res) => {
   } catch (error) {
     console.error('Error generating report:', error);
     res.status(500).json({ error: 'Failed to generate report' });
+  }
+});
+
+function extractSectionsFromFullText(text) {
+  const sections = {};
+  
+  const sectionPatterns = {
+    abstract: /abstract[\s\n:]+/i,
+    introduction: /(?:introduction|background)[\s\n:]+/i,
+    methodology: /(?:methodology|methods|experimental setup|materials and methods)[\s\n:]+/i,
+    results: /results[\s\n:]+/i,
+    discussion: /discussion[\s\n:]+/i,
+    conclusion: /(?:conclusion|conclusions|concluding remarks)[\s\n:]+/i
+  };
+  
+  for (const [sectionName, pattern] of Object.entries(sectionPatterns)) {
+    const match = text.match(pattern);
+    if (match) {
+      const startIndex = match.index + match[0].length;
+      
+      let endIndex = text.length;
+      for (const nextPattern of Object.values(sectionPatterns)) {
+        const nextMatch = text.slice(startIndex).match(nextPattern);
+        if (nextMatch && nextMatch.index < endIndex - startIndex) {
+          endIndex = startIndex + nextMatch.index;
+        }
+      }
+      
+      const sectionContent = text.slice(startIndex, endIndex).trim();
+      sections[sectionName] = sectionContent.length > 1000 
+        ? sectionContent.substring(0, 1000) + '...' 
+        : sectionContent;
+    }
+  }
+  
+  return sections;
+}
+
+function summarizeFullText(text, maxLength = 2000) {
+  if (text.length <= maxLength) return text;
+  
+  const truncated = text.substring(0, maxLength);
+  const lastPeriod = truncated.lastIndexOf('.');
+  
+  if (lastPeriod > maxLength * 0.8) {
+    return truncated.substring(0, lastPeriod + 1);
+  }
+  
+  return truncated + '...';
+}
+
+app.post('/api/get-related-papers', async (req, res) => {
+  try {
+    const { paperId } = req.body;
+    
+    if (!paperId) {
+      return res.status(400).json({ error: 'Paper ID is required' });
+    }
+    
+    const response = await axios.get(`https://api.core.ac.uk/v3/works/${paperId}/related`, {
+      headers: { 'Authorization': `Bearer ${process.env.CORE_API_KEY}` }
+    });
+    
+    res.json({ relatedPapers: response.data.results || [] });
+  } catch (error) {
+    console.error('Error getting related papers:', error);
+    res.status(500).json({ error: 'Failed to get related papers' });
   }
 });
 
