@@ -34,7 +34,7 @@ To get the project up and running, follow these steps:
     
         OPENAI_API_KEY=YOUR_OPENAI_API_KEY
         OPENAI_BASE_URL=YOUR_OPENAI_BASE_URL (Optional, if using a custom OpenAI compatible API endpoint)
-        CORE_API_KEY=YOUR_CORE_API_KEY (Optional, if your application requires an additional API key)
+        CORE_API_KEY=YOUR_CORE_API_KEY
         PORT=5000
         
     
@@ -88,4 +88,4 @@ If you find this project helpful or interesting, please consider showing your su
 *   **Star this repository** on GitHub to help others discover it! ⭐
 *   [![Buy Me A Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://www.buymeacoffee.com/AsaBizanjo)
     
-    Buy me a coffee to support the development and maintenance of this project! (Replace `YOUR_USERNAME` with your actual Buy Me a Coffee username)
+*  Buy me a coffee to support the development and maintenance of this project! 
