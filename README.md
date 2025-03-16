@@ -34,7 +34,7 @@ To get the project up and running, follow these steps:
     
         OPENAI_API_KEY=YOUR_OPENAI_API_KEY
         OPENAI_BASE_URL=YOUR_OPENAI_BASE_URL (Optional, if using a custom OpenAI compatible API endpoint)
-        CORE_API_KEY=YOUR_CORE_API_KEY (Optional, if your application requires an additional API key)
+        CORE_API_KEY=YOUR_CORE_API_KEY
         PORT=5000
         
     
