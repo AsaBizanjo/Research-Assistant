@@ -86,6 +86,6 @@ Show Your Support
 If you find this project helpful or interesting, please consider showing your support:
 
 *   **Star this repository** on GitHub to help others discover it! ⭐
-   [![Buy Me A Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://www.buymeacoffee.com/AsaBizanjo)
+*   [![Buy Me A Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://www.buymeacoffee.com/AsaBizanjo)
     
 *  Buy me a coffee to support the development and maintenance of this project! 
